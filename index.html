@@ -905,8 +905,8 @@ async function hostNext() {
     S.round++;
     S.qIdx = 0;
     if (S.round >= ROUNDS.length) {
-      /* Game over */
-      await hostShowPodium();
+      /* Game over — 최종 랭킹 먼저 보여주고, 버튼 누르면 시상대 */
+      await hostShowLeaderboard(true);
     } else {
       /* Show leaderboard then next round */
       await hostShowLeaderboard(true);
@@ -921,13 +921,24 @@ async function hostNext() {
 
 async function hostShowLeaderboard(isRoundEnd) {
   show('v-host-lb');
+
+  /* 제목 설정 */
+  const titleEl = document.querySelector('#v-host-lb h2');
+  if (S.round >= ROUNDS.length) {
+    titleEl.textContent = '🏆 최종 순위 (라운드 1+2 합계)';
+  } else if (isRoundEnd) {
+    titleEl.textContent = `📊 라운드 ${S.round} 결과`;
+  } else {
+    titleEl.textContent = '🏆 현재 순위';
+  }
+
   const snap = await db.collection('rooms').doc(S.pin).collection('players')
     .orderBy('score', 'desc').get();
   const players = [];
   snap.forEach(d => players.push({ id: d.id, ...d.data() }));
 
   const list = document.getElementById('h-lb-list');
-  const top = players.slice(0, 7);
+  const top = players.slice(0, 10);
   list.innerHTML = top.map((p, i) => `
     <div class="lb-entry" style="animation-delay:${i * 0.1}s">
       <div class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</div>
@@ -940,7 +951,7 @@ async function hostShowLeaderboard(isRoundEnd) {
   if (isRoundEnd && S.round < ROUNDS.length) {
     btn.textContent = `${ROUNDS[S.round].icon} 라운드 ${S.round + 1} 시작! ▶`;
   } else if (S.round >= ROUNDS.length) {
-    btn.textContent = '🏆 최종 결과 보기!';
+    btn.textContent = '🏆 시상대 보기!';
   } else {
     btn.textContent = '다음 문제 ▶';
   }
