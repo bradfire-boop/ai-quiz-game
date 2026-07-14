@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AI 퀴즈 대결!</title>
+<!--
+  ============================================================
+  중학교 2학년 AI 수업 - 멀티플레이어 퀴즈 게임
+  카훗(Kahoot) 스타일 | Firebase Firestore 실시간 동기화
+  ============================================================
+
+  [사전 설정 필요]
+  1. Firebase Console → Authentication → Sign-in method → Anonymous 활성화
+  2. Firebase Console → Firestore Database → Rules 에 아래 규칙 적용:
+
+     rules_version = '2';
+     service cloud.firestore {
+       match /databases/{database}/documents {
+         match /rooms/{roomId} {
+           allow read, write: if request.auth != null;
+           match /{document=**} {
+             allow read, write: if request.auth != null;
+           }
+         }
+       }
+     }
+
+  [퀴즈 수정 방법]
+  - 아래 JavaScript의 ROUNDS 배열에서 questions를 수정하세요
+  - 각 문제: { q: "질문", c: ["보기1","보기2","보기3","보기4"], a: 정답인덱스(0~3) }
+
+  [K-Pop 오디오]
+  - 라운드 2 K-Pop 문제에서 호스트 화면의 재생 버튼을 누르면 플레이스홀더 효과음이 재생됩니다
+  - 실제 수업에서는 선생님이 별도 기기(유튜브 등)로 노래 1초를 재생해 주세요
+-->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;overflow-x:hidden}
+body{
+  font-family:'Segoe UI','Apple SD Gothic Neo','Malgun Gothic',sans-serif;
+  background:linear-gradient(135deg,#1a0533 0%,#46178f 50%,#2d0a5e 100%);
+  color:#fff;
+  min-height:100vh;
+  -webkit-tap-highlight-color:transparent;
+  user-select:none;
+}
+.view{display:none;width:100%;min-height:100vh;padding:20px;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.view.active{display:flex}
+h1{font-size:2.8rem;margin-bottom:8px;text-shadow:2px 2px 8px rgba(0,0,0,.3)}
+h2{font-size:2rem;margin-bottom:12px}
+h3{font-size:1.3rem;margin-bottom:8px;opacity:.85}
+.subtitle{font-size:1.1rem;opacity:.7;margin-bottom:32px}
+.emoji-big{font-size:5rem;margin-bottom:16px}
+
+/* === BUTTONS === */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  border:none;border-radius:8px;padding:16px 36px;font-size:1.2rem;font-weight:700;
+  color:#fff;cursor:pointer;transition:all .15s;text-decoration:none;
+}
+.btn:hover{transform:scale(1.04);filter:brightness(1.1)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none;filter:none}
+.btn-orange{background:#ff6b35}
+.btn-green{background:#26890c}
+.btn-blue{background:#1368ce}
+.btn-purple{background:#864cbf}
+.btn-white{background:#fff;color:#46178f}
+.btn-sm{padding:10px 20px;font-size:1rem}
+.btn-lg{padding:20px 48px;font-size:1.5rem;border-radius:12px}
+.btn-block{width:100%;max-width:340px}
+
+/* === LANDING === */
+.landing-btns{display:flex;flex-direction:column;gap:16px;margin-top:20px}
+
+/* === HOST LOBBY === */
+.pin-box{
+  background:#fff;color:#46178f;padding:24px 48px;border-radius:16px;
+  margin:20px 0;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,.3);
+}
+.pin-label{font-size:1rem;font-weight:600;letter-spacing:2px;text-transform:uppercase;opacity:.7}
+.pin-number{font-size:4.5rem;font-weight:900;letter-spacing:12px;line-height:1.2}
+.qr-box{background:#fff;padding:16px;border-radius:12px;display:inline-block;margin:12px 0}
+.qr-box img{display:block}
+.join-url{font-size:.75rem;opacity:.6;word-break:break-all;max-width:400px;margin:8px 0 16px}
+.player-grid{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:700px;margin:16px 0}
+.player-chip{
+  background:rgba(255,255,255,.15);padding:8px 18px;border-radius:24px;
+  font-size:.95rem;animation:chipIn .3s ease;backdrop-filter:blur(4px);
+}
+@keyframes chipIn{from{transform:scale(0);opacity:0}to{transform:scale(1);opacity:1}}
+.player-count{font-size:1.1rem;opacity:.8;margin:8px 0}
+
+/* === HOST QUESTION === */
+.q-header{width:100%;max-width:900px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.q-round-badge{background:rgba(255,255,255,.15);padding:6px 16px;border-radius:20px;font-size:.9rem}
+.q-number{font-size:.9rem;opacity:.8}
+.timer-bar{width:100%;max-width:900px;height:10px;background:rgba(255,255,255,.2);border-radius:5px;margin-bottom:20px;overflow:hidden}
+.timer-fill{height:100%;background:linear-gradient(90deg,#ff6b35,#e21b3c);border-radius:5px;transition:width .1s linear}
+.timer-text{font-size:2.5rem;font-weight:900;margin-bottom:16px;min-height:60px}
+.q-text{font-size:1.6rem;font-weight:700;margin-bottom:28px;max-width:800px;line-height:1.4}
+.choices-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;width:100%;max-width:900px}
+.choice-card{
+  padding:22px 20px;border-radius:10px;font-size:1.15rem;font-weight:700;
+  display:flex;align-items:center;gap:14px;min-height:72px;
+  transition:all .3s;position:relative;overflow:hidden;
+}
+.choice-card .shape{font-size:1.4rem;flex-shrink:0}
+.choice-card.correct-highlight{box-shadow:0 0 0 4px #fff,0 0 20px rgba(255,255,255,.5);transform:scale(1.03)}
+.choice-card.wrong-dim{opacity:.4}
+.c-red{background:#e21b3c}.c-blue{background:#1368ce}.c-yellow{background:#d89e00}.c-green{background:#26890c}
+.answer-counter{
+  position:fixed;bottom:24px;right:24px;background:rgba(0,0,0,.5);
+  padding:12px 24px;border-radius:30px;font-size:1.1rem;backdrop-filter:blur(8px);
+}
+
+/* === HOST RESULTS === */
+.results-container{width:100%;max-width:700px;margin:20px 0}
+.result-row{display:flex;align-items:center;margin:10px 0;gap:12px}
+.result-label{width:200px;text-align:right;font-size:1rem;display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.result-bar-bg{flex:1;height:44px;background:rgba(255,255,255,.1);border-radius:6px;overflow:hidden;position:relative}
+.result-bar-fill{height:100%;border-radius:6px;display:flex;align-items:center;padding:0 14px;font-weight:700;font-size:1.1rem;transition:width .6s cubic-bezier(.4,0,.2,1);min-width:fit-content}
+.correct-badge{font-size:1.3rem;margin-left:8px}
+
+/* === HOST AUDIO BUTTON (K-Pop) === */
+.audio-btn{
+  background:linear-gradient(135deg,#ff6b35,#e21b3c);border:none;border-radius:50%;
+  width:80px;height:80px;font-size:2.2rem;color:#fff;cursor:pointer;
+  margin:12px 0 20px;transition:all .2s;box-shadow:0 4px 20px rgba(226,27,60,.4);
+}
+.audio-btn:hover{transform:scale(1.1)}
+.audio-btn:active{transform:scale(.95)}
+.audio-btn.playing{animation:audioPulse .5s infinite alternate}
+@keyframes audioPulse{from{box-shadow:0 0 0 0 rgba(226,27,60,.6)}to{box-shadow:0 0 0 20px rgba(226,27,60,0)}}
+.song-hint{font-size:.85rem;opacity:.5;margin-top:4px}
+
+/* === LEADERBOARD === */
+.lb-list{width:100%;max-width:500px;margin:20px 0}
+.lb-entry{
+  display:flex;align-items:center;padding:14px 20px;margin:8px 0;
+  background:rgba(255,255,255,.1);border-radius:10px;
+  animation:lbSlide .4s ease both;backdrop-filter:blur(4px);
+}
+.lb-entry:nth-child(1){background:linear-gradient(90deg,rgba(255,215,0,.3),rgba(255,215,0,.1))}
+.lb-entry:nth-child(2){background:linear-gradient(90deg,rgba(192,192,192,.25),rgba(192,192,192,.08))}
+.lb-entry:nth-child(3){background:linear-gradient(90deg,rgba(205,127,50,.25),rgba(205,127,50,.08))}
+@keyframes lbSlide{from{transform:translateX(-40px);opacity:0}to{transform:translateX(0);opacity:1}}
+.lb-rank{font-size:1.6rem;width:50px;text-align:center}
+.lb-name{flex:1;font-size:1.15rem;font-weight:600}
+.lb-score{font-size:1.15rem;font-weight:700;color:#ffd700}
+
+/* === PODIUM === */
+.podium-row{display:flex;align-items:flex-end;justify-content:center;gap:16px;margin-top:40px}
+.podium-col{display:flex;flex-direction:column;align-items:center;animation:podiumRise .6s ease both}
+.podium-col:nth-child(1){animation-delay:.4s}
+.podium-col:nth-child(2){animation-delay:.1s}
+.podium-col:nth-child(3){animation-delay:.7s}
+@keyframes podiumRise{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}
+.podium-medal{font-size:3rem;margin-bottom:8px}
+.podium-name{font-size:1.2rem;font-weight:700;margin-bottom:8px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.podium-pts{font-size:.95rem;opacity:.8;margin-bottom:12px}
+.podium-block{width:130px;border-radius:10px 10px 0 0;display:flex;align-items:flex-start;justify-content:center;padding-top:16px;font-size:2rem;font-weight:900}
+.podium-1st{height:160px;background:linear-gradient(180deg,#ffd700,#b8860b)}
+.podium-2nd{height:120px;background:linear-gradient(180deg,#c0c0c0,#808080)}
+.podium-3rd{height:90px;background:linear-gradient(180deg,#cd7f32,#8b4513)}
+.podium-all-list{margin-top:32px;width:100%;max-width:500px}
+.podium-all-entry{display:flex;align-items:center;padding:8px 16px;font-size:.95rem;opacity:.8}
+.podium-all-entry span:first-child{width:40px}
+.podium-all-entry span:nth-child(2){flex:1}
+
+/* === PLAYER JOIN === */
+.join-form{display:flex;flex-direction:column;gap:14px;width:100%;max-width:320px;margin:20px 0}
+.join-form input{
+  width:100%;padding:16px 20px;border:2px solid rgba(255,255,255,.3);border-radius:10px;
+  background:rgba(255,255,255,.1);color:#fff;font-size:1.2rem;text-align:center;
+  outline:none;transition:border-color .2s;
+}
+.join-form input::placeholder{color:rgba(255,255,255,.4)}
+.join-form input:focus{border-color:#ff6b35}
+
+/* === PLAYER ANSWER === */
+.p-q-text{font-size:1rem;opacity:.85;margin-bottom:16px;padding:0 8px;max-height:80px;overflow-y:auto;line-height:1.4}
+.answer-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;width:100%;max-width:400px;flex:1;max-height:400px}
+.ans-btn{
+  border:none;border-radius:12px;font-size:1rem;font-weight:700;color:#fff;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  padding:16px 12px;text-align:center;min-height:90px;transition:all .15s;
+  line-height:1.3;word-break:keep-all;
+}
+.ans-btn:active{transform:scale(.94)}
+.ans-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.ans-btn .shape{margin-right:6px;font-size:1.1rem}
+
+/* === PLAYER RESULT === */
+.p-result-icon{font-size:6rem;animation:resultPop .4s cubic-bezier(.17,.67,.5,1.3)}
+@keyframes resultPop{from{transform:scale(0)}60%{transform:scale(1.2)}to{transform:scale(1)}}
+.p-result-text{font-size:1.8rem;font-weight:700;margin:12px 0}
+.p-points{font-size:1.3rem;opacity:.8}
+.p-total{font-size:1rem;opacity:.6;margin-top:8px}
+
+/* === PLAYER WAITING === */
+.waiting-dots span{animation:blink 1.4s infinite;font-size:2rem}
+.waiting-dots span:nth-child(2){animation-delay:.2s}
+.waiting-dots span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%{opacity:.2}40%{opacity:1}}
+
+/* === PLAYER LEADERBOARD === */
+.p-rank-big{font-size:5rem;font-weight:900;margin:16px 0}
+.p-rank-label{font-size:1.2rem;opacity:.7}
+
+/* === COUNTDOWN === */
+.countdown-num{font-size:12rem;font-weight:900;animation:countPop .7s ease}
+@keyframes countPop{from{transform:scale(3);opacity:0}50%{opacity:1}to{transform:scale(1);opacity:1}}
+
+/* === ROUND TRANSITION === */
+.round-icon{font-size:6rem;margin-bottom:16px;animation:bounceIn .6s ease}
+@keyframes bounceIn{from{transform:scale(0)}60%{transform:scale(1.15)}to{transform:scale(1)}}
+.round-name{font-size:2.2rem;font-weight:800}
+.round-desc{font-size:1.1rem;opacity:.7;margin-top:8px}
+
+/* === CONFETTI === */
+.confetti-container{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;overflow:hidden}
+.confetti-piece{
+  position:absolute;top:-20px;width:12px;height:12px;
+  animation:confettiFall 3s linear forwards;
+}
+@keyframes confettiFall{
+  0%{transform:translateY(0) rotate(0deg);opacity:1}
+  100%{transform:translateY(100vh) rotate(720deg);opacity:0}
+}
+
+/* === RESPONSIVE === */
+@media(max-width:768px){
+  h1{font-size:2rem}
+  h2{font-size:1.5rem}
+  .pin-number{font-size:3rem;letter-spacing:8px}
+  .pin-box{padding:16px 28px}
+  .choices-grid{grid-template-columns:1fr;gap:10px}
+  .choice-card{min-height:56px;padding:14px 16px;font-size:1rem}
+  .timer-text{font-size:2rem}
+  .q-text{font-size:1.2rem}
+  .answer-counter{bottom:12px;right:12px;font-size:.9rem;padding:8px 16px}
+  .result-label{width:120px;font-size:.85rem}
+  .podium-block{width:100px}
+  .podium-name{font-size:1rem;max-width:90px}
+  .btn-lg{padding:16px 32px;font-size:1.2rem}
+}
+@media(max-width:400px){
+  .view{padding:12px}
+  .pin-number{font-size:2.5rem;letter-spacing:6px}
+  .answer-grid{gap:8px}
+  .ans-btn{min-height:75px;font-size:.9rem;padding:12px 8px}
+}
+</style>
+</head>
+<body>
+
+<!-- ==================== LANDING ==================== -->
+<div id="v-landing" class="view active">
+  <div class="emoji-big">🤖</div>
+  <h1>AI 퀴즈 대결!</h1>
+  <p class="subtitle">중학교 2학년 AI 수업</p>
+  <div class="landing-btns">
+    <button class="btn btn-orange btn-lg btn-block" onclick="hostStart()">🎓 선생님 (호스트)</button>
+    <button class="btn btn-green btn-lg btn-block" onclick="playerStart()">📱 학생 (참가)</button>
+  </div>
+</div>
+
+<!-- ==================== HOST: LOBBY ==================== -->
+<div id="v-host-lobby" class="view">
+  <h2>게임 대기실</h2>
+  <div class="pin-box">
+    <div class="pin-label">Game PIN</div>
+    <div class="pin-number" id="h-pin"></div>
+  </div>
+  <div class="qr-box"><img id="h-qr" width="180" height="180" alt="QR"></div>
+  <div class="join-url" id="h-url"></div>
+  <div class="player-count">참가자: <strong id="h-pcount">0</strong>명</div>
+  <div class="player-grid" id="h-players"></div>
+  <button class="btn btn-green btn-lg" id="h-start-btn" onclick="hostStartGame()" disabled>게임 시작!</button>
+</div>
+
+<!-- ==================== HOST: COUNTDOWN ==================== -->
+<div id="v-host-countdown" class="view">
+  <div class="countdown-num" id="h-cd-num">3</div>
+</div>
+
+<!-- ==================== HOST: ROUND TRANSITION ==================== -->
+<div id="v-host-round" class="view">
+  <div class="round-icon" id="h-round-icon"></div>
+  <div class="round-name" id="h-round-name"></div>
+  <div class="round-desc" id="h-round-desc"></div>
+</div>
+
+<!-- ==================== HOST: QUESTION ==================== -->
+<div id="v-host-question" class="view">
+  <div class="q-header">
+    <span class="q-round-badge" id="h-badge"></span>
+    <span class="q-number" id="h-qnum"></span>
+  </div>
+  <div class="timer-bar"><div class="timer-fill" id="h-timer-fill"></div></div>
+  <div class="timer-text" id="h-timer-text"></div>
+  <div id="h-audio-area" style="display:none">
+    <button class="audio-btn" id="h-audio-btn" onclick="playAudio()">🔊</button>
+    <div class="song-hint" id="h-song-hint"></div>
+  </div>
+  <div class="q-text" id="h-q-text"></div>
+  <div class="choices-grid" id="h-choices"></div>
+  <div class="answer-counter">응답: <span id="h-ans-count">0</span> / <span id="h-ans-total">0</span></div>
+</div>
+
+<!-- ==================== HOST: RESULTS ==================== -->
+<div id="v-host-results" class="view">
+  <h2 id="h-res-title">정답 확인!</h2>
+  <div class="q-text" id="h-res-q" style="font-size:1.2rem;opacity:.7"></div>
+  <div class="results-container" id="h-res-chart"></div>
+  <button class="btn btn-purple btn-lg" onclick="hostNext()">다음 ▶</button>
+</div>
+
+<!-- ==================== HOST: LEADERBOARD ==================== -->
+<div id="v-host-lb" class="view">
+  <h2>🏆 현재 순위</h2>
+  <div class="lb-list" id="h-lb-list"></div>
+  <button class="btn btn-purple btn-lg" id="h-lb-btn" onclick="hostContinue()">계속 ▶</button>
+</div>
+
+<!-- ==================== HOST: PODIUM ==================== -->
+<div id="v-host-podium" class="view">
+  <h2>🏆 최종 순위!</h2>
+  <div class="podium-row" id="h-podium-row"></div>
+  <div class="podium-all-list" id="h-podium-all"></div>
+  <button class="btn btn-orange btn-lg" onclick="hostNewGame()" style="margin-top:24px">새 게임 🔄</button>
+</div>
+
+<!-- ==================== PLAYER: JOIN ==================== -->
+<div id="v-player-join" class="view">
+  <div class="emoji-big">📱</div>
+  <h2>게임 참가</h2>
+  <div class="join-form">
+    <input id="p-pin" type="tel" placeholder="PIN 번호 6자리" maxlength="6" inputmode="numeric">
+    <input id="p-name" type="text" placeholder="닉네임" maxlength="12">
+    <button class="btn btn-green btn-block" onclick="playerJoin()">참가! 🚀</button>
+  </div>
+  <p id="p-join-err" style="color:#ff6b6b;margin-top:8px;font-size:.9rem"></p>
+</div>
+
+<!-- ==================== PLAYER: WAITING ==================== -->
+<div id="v-player-wait" class="view">
+  <div class="emoji-big">✅</div>
+  <h2 id="p-wait-name"></h2>
+  <p class="subtitle">게임 시작을 기다리는 중</p>
+  <div class="waiting-dots"><span>.</span><span>.</span><span>.</span></div>
+</div>
+
+<!-- ==================== PLAYER: COUNTDOWN ==================== -->
+<div id="v-player-cd" class="view">
+  <div class="countdown-num" id="p-cd-num">3</div>
+</div>
+
+<!-- ==================== PLAYER: ROUND TRANSITION ==================== -->
+<div id="v-player-round" class="view">
+  <div class="round-icon" id="p-round-icon"></div>
+  <div class="round-name" id="p-round-name"></div>
+  <div class="round-desc" id="p-round-desc"></div>
+</div>
+
+<!-- ==================== PLAYER: ANSWER ==================== -->
+<div id="v-player-answer" class="view">
+  <div class="timer-bar" style="max-width:100%"><div class="timer-fill" id="p-timer-fill"></div></div>
+  <p class="p-q-text" id="p-q-text"></p>
+  <div class="answer-grid">
+    <button id="ab0" class="ans-btn c-red" onclick="playerAnswer(0)"></button>
+    <button id="ab1" class="ans-btn c-blue" onclick="playerAnswer(1)"></button>
+    <button id="ab2" class="ans-btn c-yellow" onclick="playerAnswer(2)"></button>
+    <button id="ab3" class="ans-btn c-green" onclick="playerAnswer(3)"></button>
+  </div>
+</div>
+
+<!-- ==================== PLAYER: ANSWERED (waiting) ==================== -->
+<div id="v-player-answered" class="view">
+  <div class="emoji-big">⏳</div>
+  <h2>답변 완료!</h2>
+  <p class="subtitle">결과를 기다리는 중...</p>
+</div>
+
+<!-- ==================== PLAYER: RESULT ==================== -->
+<div id="v-player-result" class="view">
+  <div class="p-result-icon" id="p-res-icon"></div>
+  <div class="p-result-text" id="p-res-text"></div>
+  <div class="p-points" id="p-res-pts"></div>
+  <div class="p-total" id="p-res-total"></div>
+</div>
+
+<!-- ==================== PLAYER: LEADERBOARD ==================== -->
+<div id="v-player-lb" class="view">
+  <div class="p-rank-big" id="p-lb-rank"></div>
+  <div class="p-rank-label" id="p-lb-label"></div>
+  <div style="font-size:1.3rem;margin-top:12px;color:#ffd700" id="p-lb-score"></div>
+</div>
+
+<!-- ==================== PLAYER: FINAL ==================== -->
+<div id="v-player-final" class="view">
+  <div class="emoji-big" id="p-final-medal"></div>
+  <h2 id="p-final-rank"></h2>
+  <div style="font-size:1.3rem;margin-top:8px" id="p-final-score"></div>
+</div>
+
+<!-- ==================== CONFETTI CONTAINER ==================== -->
+<div class="confetti-container" id="confetti"></div>
+
+<script>
+/* ================================================================
+   FIREBASE CONFIG
+   ================================================================ */
+const firebaseConfig = {
+  apiKey: "AIzaSyClvBCXQ0CsMpznlnTljPLYPAXb87UQgJ8",
+  authDomain: "kpop-quiz-8f7ce.firebaseapp.com",
+  projectId: "kpop-quiz-8f7ce",
+  storageBucket: "kpop-quiz-8f7ce.firebasestorage.app",
+  messagingSenderId: "840607925184",
+  appId: "1:840607925184:web:aee48fe39a6aaf68c6fe25",
+  measurementId: "G-MLNZNKXM76"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const auth = firebase.auth();
+
+/* ================================================================
+   QUIZ DATA — 라운드 1: AI 퀴즈 (20문제), 라운드 2: K-Pop 1초 듣기 (5문제)
+   ================================================================ */
+const ROUNDS = [
+  {
+    name: "AI 퀴즈",
+    icon: "🤖",
+    desc: "인공지능에 대해 얼마나 알고 있나요?",
+    time: 20,
+    questions: [
+      {q:"ChatGPT를 만든 회사는?", c:["구글","마이크로소프트","오픈AI","메타"], a:2},
+      {q:"ChatGPT가 100만 사용자 돌파에 걸린 시간은?", c:["5일","50일","100일","241일"], a:0},
+      {q:"ChatGPT 출시 후 \"코드 레드\"를 발령한 회사는?", c:["애플","구글","삼성","아마존"], a:1},
+      {q:"AI를 \"미래를 위협할 강력한 것\"이라 평가한 인물은?", c:["빌 게이츠","마크 저커버그","일론 머스크","팀 쿡"], a:2},
+      {q:"xAI와 Grok을 만든 사람은?", c:["샘 올트먼","일론 머스크","제프 베이조스","순다르 피차이"], a:1},
+      {q:"OpenAI의 CEO는?", c:["일론 머스크","샘 올트먼","빌 게이츠","마크 저커버그"], a:1},
+      {q:"일론 머스크가 만든 AI 챗봇 이름은?", c:["Gemini","Claude","Grok","Copilot"], a:2},
+      {q:"AI로 복원해 완성한 비틀즈 마지막 곡은?", c:["Yesterday","Let It Be","Now and Then","Hey Jude"], a:2},
+      {q:"구글이 만든 AI 모델의 이름은?", c:["ChatGPT","Grok","Claude","Gemini"], a:3},
+      {q:"AI가 히트곡을 뇌 활동으로 맞춘 정확도는?", c:["50%","75%","90%","97%"], a:3},
+      {q:"일론 머스크가 만든 인간형 로봇의 이름은?", c:["아시모","옵티머스","아틀라스","페퍼"], a:1},
+      {q:"테슬라의 자율주행 기술 이름은?", c:["AutoPilot","FSD","DriveAI","RoboTaxi"], a:1},
+      {q:"머스크가 뇌와 컴퓨터를 연결하는 프로젝트는?", c:["스타링크","뉴럴링크","보링컴퍼니","하이퍼루프"], a:1},
+      {q:"\"딥페이크\"란?", c:["깊은 학습","AI로 만든 가짜 영상","심해 탐사 AI","게임용 AI"], a:1},
+      {q:"AI 이미지 생성 도구가 아닌 것은?", c:["미드저니","DALL-E","카카오톡","Bing Image Creator"], a:2},
+      {q:"전 세계 검색엔진 점유율 1위 기업은?", c:["네이버","구글","마이크로소프트","야후"], a:1},
+      {q:"2016년 이세돌 9단과 바둑 대결한 AI는?", c:["ChatGPT","알파고","왓슨","Grok"], a:1},
+      {q:"생성형 AI가 할 수 없는 것은?", c:["글쓰기","그림 그리기","음악 만들기","실제로 요리하기"], a:3},
+      {q:"일론 머스크의 우주 인터넷 프로젝트는?", c:["5G","스타링크","WiFi 7","위성DMB"], a:1},
+      {q:"AI 시대에 가장 중요한 역량은?", c:["암기력","계산 능력","창의적 사고와 질문력","타이핑 속도"], a:2}
+    ]
+  },
+  {
+    name: "K-Pop 1초 듣기",
+    icon: "🎵",
+    desc: "1초만 듣고 노래를 맞춰보세요!",
+    time: 15,
+    isAudio: true,
+    questions: [
+      {q:"이 노래의 제목은?",c:["Attention","Hype Boy","Ditto","Super Shy"],a:1,song:"NewJeans - Hype Boy",itunes:"Hype Boy NewJeans",tone:[523,659,784,1047]},
+      {q:"이 노래의 제목은?",c:["After LIKE","LOVE DIVE","Kitsch","I AM"],a:1,song:"IVE - LOVE DIVE",itunes:"LOVE DIVE IVE",tone:[988,784,659,523]},
+      {q:"이 노래의 제목은?",c:["Next Level","Savage","Supernova","Armageddon"],a:2,song:"aespa - Supernova",itunes:"Supernova aespa",tone:[880,1109,1319,880]},
+      {q:"이 노래의 제목은?",c:["Butter","Dynamite","Permission to Dance","Boy With Luv"],a:1,song:"BTS - Dynamite",itunes:"Dynamite BTS",tone:[523,659,523,784]},
+      {q:"이 노래의 제목은?",c:["DDU-DU DDU-DU","Kill This Love","Pink Venom","How You Like That"],a:3,song:"BLACKPINK - How You Like That",itunes:"How You Like That BLACKPINK",tone:[294,294,370,440]},
+      {q:"이 멜로디의 주인공은?",c:["뉴진스","아이브","르세라핌","키스오브라이프"],a:1,song:"IVE - After LIKE",itunes:"After LIKE IVE",tone:[659,784,880,1047]},
+      {q:"누구의 곡일까요?",c:["BTS","세븐틴","NCT","스트레이키즈"],a:3,song:"Stray Kids - God's Menu",itunes:"God's Menu Stray Kids",tone:[392,494,392,587]},
+      {q:"이 비트의 그룹은?",c:["블랙핑크","트와이스","레드벨벳","마마무"],a:0,song:"BLACKPINK - Pink Venom",itunes:"Pink Venom BLACKPINK",tone:[330,330,440,523]},
+      {q:"도입부 1초 맞추기!",c:["에스파","있지","엔믹스","스테이씨"],a:1,song:"ITZY - WANNABE",itunes:"WANNABE ITZY",tone:[523,587,659,784]},
+      {q:"누구의 목소리일까요?",c:["아이유","태연","비비","청하"],a:0,song:"IU - Blueming",itunes:"Blueming IU",tone:[784,880,784,659]},
+      {q:"이 리듬의 주인공은?",c:["투모로우바이투게더","엔하이픈","보이넥스트도어","제로베이스원"],a:1,song:"ENHYPEN - Bite Me",itunes:"Bite Me ENHYPEN",tone:[440,523,659,880]},
+      {q:"어떤 그룹의 곡일까요?",c:["트와이스","뉴진스","아이브","ITZY"],a:0,song:"TWICE - What is Love?",itunes:"What is Love TWICE",tone:[659,659,784,880]},
+      {q:"이 비트 맞춰봐!",c:["EXO","방탄소년단","NCT Dream","세븐틴"],a:2,song:"NCT Dream - Candy",itunes:"Candy NCT Dream",tone:[523,659,784,523]},
+      {q:"누구의 곡?",c:["르세라핌","에스파","아이브","키스오브라이프"],a:0,song:"LE SSERAFIM - ANTIFRAGILE",itunes:"ANTIFRAGILE LE SSERAFIM",tone:[440,554,659,880]},
+      {q:"이 멜로디는?",c:["데이식스","더보이즈","에이티즈","스트레이키즈"],a:0,song:"DAY6 - Zombie",itunes:"Zombie DAY6",tone:[330,392,440,523]},
+      {q:"솔로 아티스트 맞추기!",c:["지코","크러쉬","딘","박재범"],a:0,song:"Zico - Any Song (아무노래)",itunes:"Any Song Zico",tone:[294,370,440,294]},
+      {q:"이 곡의 주인공은?",c:["블랙핑크 제니","블랙핑크 리사","블랙핑크 로제","블랙핑크 지수"],a:2,song:"ROSÉ - APT.",itunes:"APT ROSÉ Bruno Mars",tone:[523,659,784,1047]},
+      {q:"어떤 그룹?",c:["보이넥스트도어","라이즈","제로베이스원","투모로우바이투게더"],a:0,song:"BOYNEXTDOOR - One and Only",itunes:"One and Only BOYNEXTDOOR",tone:[440,523,587,659]},
+      {q:"이 비트의 주인공은?",c:["(여자)아이들","레드벨벳","마마무","오마이걸"],a:0,song:"(G)I-DLE - Queencard",itunes:"Queencard G I-DLE",tone:[587,659,784,880]},
+      {q:"마지막 문제!",c:["BTS","빅뱅","EXO","2PM"],a:1,song:"BIGBANG - BANG BANG BANG",itunes:"BANG BANG BANG BIGBANG",tone:[330,330,440,554]}
+    ]
+  }
+];
+
+const COLORS = ['c-red','c-blue','c-yellow','c-green'];
+const SHAPES = ['▲','◆','●','■'];
+const COLOR_HEX = ['#e21b3c','#1368ce','#d89e00','#26890c'];
+
+/* ================================================================
+   GAME STATE
+   ================================================================ */
+const S = {
+  role: null,       // 'host' | 'player'
+  pin: null,
+  uid: null,
+  pName: null,
+  score: 0,
+  round: 0,
+  qIdx: 0,
+  answered: false,
+  lastQKey: '',
+  timer: null,
+  listeners: [],
+  playerCount: 0,
+  qStartTime: 0
+};
+
+/* ================================================================
+   UTILITIES
+   ================================================================ */
+function show(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function genPin() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+function calcPoints(timeMs, correct, timeLimitSec) {
+  if (!correct) return 0;
+  const ratio = Math.max(0, 1 - timeMs / (timeLimitSec * 1000));
+  return 500 + Math.round(500 * ratio);
+}
+function clearTimer() {
+  if (S.timer) { clearInterval(S.timer); S.timer = null; }
+}
+function clearListeners() {
+  S.listeners.forEach(fn => fn());
+  S.listeners = [];
+}
+
+/* Sound effects via Web Audio API */
+let audioCtx = null;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+function beep(freq, dur, vol) {
+  try {
+    const ctx = getAudioCtx();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = freq || 440;
+    o.type = 'sine';
+    g.gain.setValueAtTime(vol || 0.15, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (dur || 0.2));
+    o.start(); o.stop(ctx.currentTime + (dur || 0.2));
+  } catch(e) {}
+}
+function playCorrect() { beep(880, 0.15, 0.2); setTimeout(() => beep(1320, 0.3, 0.2), 150); }
+function playWrong() { beep(200, 0.4, 0.15); }
+function playCountdownBeep() { beep(660, 0.1, 0.12); }
+function playGo() { beep(880, 0.1, 0.2); setTimeout(() => beep(1100, 0.15, 0.2), 100); setTimeout(() => beep(1320, 0.3, 0.2), 200); }
+
+/* iTunes Preview Cache & Audio */
+const previewCache = {};
+let currentAudio = null;
+
+async function fetchPreviewUrl(query) {
+  if (previewCache[query]) return previewCache[query];
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 4000);
+    const resp = await fetch(
+      'https://itunes.apple.com/search?term=' + encodeURIComponent(query) + '&media=music&limit=1&country=kr',
+      { signal: ctrl.signal }
+    );
+    clearTimeout(tid);
+    const data = await resp.json();
+    if (data.results && data.results[0] && data.results[0].previewUrl) {
+      previewCache[query] = data.results[0].previewUrl;
+      return data.results[0].previewUrl;
+    }
+  } catch(e) { /* timeout or network error — fallback to tone */ }
+  return null;
+}
+
+function preloadRoundAudio(roundIdx) {
+  const r = ROUNDS[roundIdx];
+  if (!r || !r.isAudio) return;
+  r.questions.forEach(q => { if (q.itunes) fetchPreviewUrl(q.itunes); });
+}
+
+async function playAudio() {
+  const q = ROUNDS[S.round].questions[S.qIdx];
+  const btn = document.getElementById('h-audio-btn');
+  btn.classList.add('playing');
+  btn.textContent = '▶';
+
+  /* Stop previous */
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+
+  /* Try iTunes preview */
+  if (q.itunes) {
+    const url = await fetchPreviewUrl(q.itunes);
+    if (url) {
+      try {
+        currentAudio = new Audio(url);
+        currentAudio.volume = 0.9;
+        await currentAudio.play();
+        setTimeout(() => {
+          if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+          btn.classList.remove('playing');
+          btn.textContent = '🔊';
+        }, 1000);
+        return;
+      } catch(e) { /* autoplay blocked or network error */ }
+    }
+  }
+
+  /* Fallback: synthesized tone */
+  if (q.tone) {
+    const ctx = getAudioCtx();
+    const tones = q.tone;
+    const dur = 1.0 / tones.length;
+    let t = ctx.currentTime;
+    tones.forEach(freq => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.type = 'triangle';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.25, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.9);
+      o.start(t); o.stop(t + dur);
+      t += dur;
+    });
+  }
+  setTimeout(() => { btn.classList.remove('playing'); btn.textContent = '🔊'; }, 1100);
+}
+
+function spawnConfetti() {
+  const container = document.getElementById('confetti');
+  container.innerHTML = '';
+  const colors = ['#e21b3c','#1368ce','#d89e00','#26890c','#ff6b35','#ffd700','#ff69b4','#00ffcc'];
+  for (let i = 0; i < 80; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = Math.random() * 100 + '%';
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDuration = (2 + Math.random() * 2) + 's';
+    piece.style.animationDelay = Math.random() * 1.5 + 's';
+    piece.style.borderRadius = Math.random() > 0.5 ? '50%' : '2px';
+    piece.style.width = (8 + Math.random() * 8) + 'px';
+    piece.style.height = (8 + Math.random() * 8) + 'px';
+    container.appendChild(piece);
+  }
+  setTimeout(() => container.innerHTML = '', 5000);
+}
+
+/* ================================================================
+   AUTH
+   ================================================================ */
+async function doAuth() {
+  if (S.uid) return S.uid;
+  const cred = await auth.signInAnonymously();
+  S.uid = cred.user.uid;
+  return S.uid;
+}
+
+/* ================================================================
+   HOST LOGIC
+   ================================================================ */
+async function hostStart() {
+  show('v-host-lobby');
+  await doAuth();
+  S.role = 'host';
+  S.pin = genPin();
+  S.round = 0;
+  S.qIdx = 0;
+
+  document.getElementById('h-pin').textContent = S.pin;
+  const pageUrl = location.origin + location.pathname;
+  const joinUrl = pageUrl + '?pin=' + S.pin;
+  document.getElementById('h-url').textContent = joinUrl;
+  document.getElementById('h-qr').src =
+    'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(joinUrl);
+
+  await db.collection('rooms').doc(S.pin).set({
+    hostId: S.uid,
+    status: 'lobby',
+    round: 0,
+    qIdx: 0,
+    qStart: 0,
+    timeLimit: 20,
+    ts: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  /* Listen players */
+  const unsub = db.collection('rooms').doc(S.pin).collection('players')
+    .onSnapshot(snap => {
+      const grid = document.getElementById('h-players');
+      const arr = [];
+      snap.forEach(d => arr.push(d.data().name));
+      S.playerCount = arr.length;
+      grid.innerHTML = arr.map(n => `<div class="player-chip">${n}</div>`).join('');
+      document.getElementById('h-pcount').textContent = arr.length;
+      document.getElementById('h-start-btn').disabled = arr.length < 1;
+    });
+  S.listeners.push(unsub);
+}
+
+async function hostStartGame() {
+  S.round = 0;
+  S.qIdx = 0;
+  await hostShowRoundTransition();
+}
+
+async function hostShowRoundTransition() {
+  const r = ROUNDS[S.round];
+  show('v-host-round');
+  document.getElementById('h-round-icon').textContent = r.icon;
+  document.getElementById('h-round-name').textContent = `라운드 ${S.round + 1}: ${r.name}`;
+  document.getElementById('h-round-desc').textContent = r.desc;
+
+  await db.collection('rooms').doc(S.pin).update({ status: 'round-transition', round: S.round });
+
+  /* Preload iTunes audio for K-Pop round */
+  preloadRoundAudio(S.round);
+
+  setTimeout(() => hostCountdown(), 2500);
+}
+
+function hostCountdown() {
+  show('v-host-countdown');
+  let n = 3;
+  const el = document.getElementById('h-cd-num');
+  el.textContent = n;
+  playCountdownBeep();
+
+  const iv = setInterval(() => {
+    n--;
+    if (n > 0) {
+      el.textContent = n;
+      playCountdownBeep();
+    } else {
+      clearInterval(iv);
+      playGo();
+      hostShowQuestion();
+    }
+  }, 800);
+}
+
+async function hostShowQuestion() {
+  show('v-host-question');
+  const r = ROUNDS[S.round];
+  const q = r.questions[S.qIdx];
+  const totalQBefore = S.round === 0 ? 0 : ROUNDS[0].questions.length;
+  const globalQ = totalQBefore + S.qIdx + 1;
+  const totalQ = ROUNDS.reduce((s, rd) => s + rd.questions.length, 0);
+
+  document.getElementById('h-badge').textContent = `${r.icon} ${r.name}`;
+  document.getElementById('h-qnum').textContent = `${globalQ} / ${totalQ}`;
+  document.getElementById('h-q-text').textContent = q.q;
+  document.getElementById('h-timer-fill').style.width = '100%';
+  document.getElementById('h-timer-text').textContent = r.time;
+  document.getElementById('h-ans-count').textContent = '0';
+  document.getElementById('h-ans-total').textContent = S.playerCount;
+
+  /* Audio area for K-Pop round */
+  const audioArea = document.getElementById('h-audio-area');
+  if (r.isAudio) {
+    audioArea.style.display = 'block';
+    document.getElementById('h-song-hint').textContent = '호스트용: ' + (q.song || '');
+  } else {
+    audioArea.style.display = 'none';
+  }
+
+  /* Choices */
+  const grid = document.getElementById('h-choices');
+  grid.innerHTML = q.c.map((txt, i) =>
+    `<div class="choice-card ${COLORS[i]}" id="hc${i}"><span class="shape">${SHAPES[i]}</span>${txt}</div>`
+  ).join('');
+
+  /* Update Firestore */
+  S.qStartTime = Date.now();
+  await db.collection('rooms').doc(S.pin).update({
+    status: 'question',
+    round: S.round,
+    qIdx: S.qIdx,
+    qStart: S.qStartTime,
+    timeLimit: r.time
+  });
+
+  /* Timer */
+  startHostTimer(r.time);
+
+  /* Listen answers */
+  if (S._ansUnsub) S._ansUnsub();
+  S._ansUnsub = db.collection('rooms').doc(S.pin).collection('answers')
+    .where('round', '==', S.round)
+    .where('qIdx', '==', S.qIdx)
+    .onSnapshot(snap => {
+      document.getElementById('h-ans-count').textContent = snap.size;
+      /* Auto-advance if all answered */
+      if (snap.size >= S.playerCount && S.playerCount > 0) {
+        clearTimer();
+        setTimeout(() => hostShowResults(), 500);
+      }
+    });
+}
+
+function startHostTimer(sec) {
+  clearTimer();
+  const fill = document.getElementById('h-timer-fill');
+  const txt = document.getElementById('h-timer-text');
+  const totalMs = sec * 1000;
+  const start = Date.now();
+
+  S.timer = setInterval(() => {
+    const elapsed = Date.now() - start;
+    const remain = Math.max(0, totalMs - elapsed);
+    fill.style.width = (remain / totalMs * 100) + '%';
+    txt.textContent = Math.ceil(remain / 1000);
+    if (remain <= 3000 && remain > 0 && Math.ceil(remain / 1000) !== Math.ceil((remain + 100) / 1000)) {
+      playCountdownBeep();
+    }
+    if (remain <= 0) {
+      clearTimer();
+      beep(300, 0.5, 0.2);
+      hostShowResults();
+    }
+  }, 100);
+}
+
+async function hostShowResults() {
+  clearTimer();
+  show('v-host-results');
+  const r = ROUNDS[S.round];
+  const q = r.questions[S.qIdx];
+
+  document.getElementById('h-res-q').textContent = q.q;
+
+  /* Fetch answers */
+  const snap = await db.collection('rooms').doc(S.pin).collection('answers')
+    .where('round', '==', S.round)
+    .where('qIdx', '==', S.qIdx)
+    .get();
+
+  const counts = [0, 0, 0, 0];
+  snap.forEach(d => {
+    const ans = d.data().answer;
+    if (ans >= 0 && ans < 4) counts[ans]++;
+  });
+
+  const maxC = Math.max(...counts, 1);
+  const chart = document.getElementById('h-res-chart');
+  chart.innerHTML = q.c.map((txt, i) => {
+    const pct = (counts[i] / maxC) * 100;
+    const isCorrect = i === q.a;
+    return `<div class="result-row">
+      <div class="result-label">${SHAPES[i]} ${txt}</div>
+      <div class="result-bar-bg">
+        <div class="result-bar-fill" style="width:${Math.max(pct, 8)}%;background:${COLOR_HEX[i]}${isCorrect ? '' : '80'}">${counts[i]}</div>
+      </div>
+      ${isCorrect ? '<span class="correct-badge">✅</span>' : ''}
+    </div>`;
+  }).join('');
+
+  /* Highlight correct on host question too */
+  document.getElementById('h-res-title').textContent = `정답: ${SHAPES[q.a]} ${q.c[q.a]}`;
+
+  await db.collection('rooms').doc(S.pin).update({ status: 'results' });
+}
+
+async function hostNext() {
+  S.qIdx++;
+  const r = ROUNDS[S.round];
+
+  if (S.qIdx >= r.questions.length) {
+    /* Round ended */
+    S.round++;
+    S.qIdx = 0;
+    if (S.round >= ROUNDS.length) {
+      /* Game over */
+      await hostShowPodium();
+    } else {
+      /* Show leaderboard then next round */
+      await hostShowLeaderboard(true);
+    }
+  } else if (S.qIdx % 5 === 0) {
+    /* Show leaderboard every 5 questions */
+    await hostShowLeaderboard(false);
+  } else {
+    hostCountdown();
+  }
+}
+
+async function hostShowLeaderboard(isRoundEnd) {
+  show('v-host-lb');
+  const snap = await db.collection('rooms').doc(S.pin).collection('players')
+    .orderBy('score', 'desc').get();
+  const players = [];
+  snap.forEach(d => players.push({ id: d.id, ...d.data() }));
+
+  const list = document.getElementById('h-lb-list');
+  const top = players.slice(0, 7);
+  list.innerHTML = top.map((p, i) => `
+    <div class="lb-entry" style="animation-delay:${i * 0.1}s">
+      <div class="lb-rank">${i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1)}</div>
+      <div class="lb-name">${p.name}</div>
+      <div class="lb-score">${(p.score || 0).toLocaleString()}점</div>
+    </div>
+  `).join('');
+
+  const btn = document.getElementById('h-lb-btn');
+  if (isRoundEnd && S.round < ROUNDS.length) {
+    btn.textContent = `${ROUNDS[S.round].icon} 라운드 ${S.round + 1} 시작! ▶`;
+  } else if (S.round >= ROUNDS.length) {
+    btn.textContent = '🏆 최종 결과 보기!';
+  } else {
+    btn.textContent = '다음 문제 ▶';
+  }
+
+  await db.collection('rooms').doc(S.pin).update({ status: 'leaderboard' });
+  S._isRoundEnd = isRoundEnd;
+}
+
+async function hostContinue() {
+  if (S.round >= ROUNDS.length) {
+    await hostShowPodium();
+  } else if (S._isRoundEnd) {
+    await hostShowRoundTransition();
+  } else {
+    hostCountdown();
+  }
+}
+
+async function hostShowPodium() {
+  show('v-host-podium');
+  spawnConfetti();
+  playGo();
+
+  const snap = await db.collection('rooms').doc(S.pin).collection('players')
+    .orderBy('score', 'desc').get();
+  const players = [];
+  snap.forEach(d => players.push({ id: d.id, ...d.data() }));
+
+  const medals = ['🥇','🥈','🥉'];
+  const blocks = ['podium-1st','podium-2nd','podium-3rd'];
+  const podiumRow = document.getElementById('h-podium-row');
+
+  /* Podium order: 2nd, 1st, 3rd */
+  const order = [1, 0, 2];
+  podiumRow.innerHTML = order.map(rank => {
+    const p = players[rank];
+    if (!p) return '';
+    return `<div class="podium-col">
+      <div class="podium-medal">${medals[rank]}</div>
+      <div class="podium-name">${p.name}</div>
+      <div class="podium-pts">${(p.score || 0).toLocaleString()}점</div>
+      <div class="podium-block ${blocks[rank]}">${rank + 1}</div>
+    </div>`;
+  }).join('');
+
+  /* All players list */
+  const allList = document.getElementById('h-podium-all');
+  allList.innerHTML = players.slice(3).map((p, i) =>
+    `<div class="podium-all-entry"><span>${i + 4}위</span><span>${p.name}</span><span>${(p.score || 0).toLocaleString()}점</span></div>`
+  ).join('');
+
+  await db.collection('rooms').doc(S.pin).update({ status: 'finished' });
+}
+
+function hostNewGame() {
+  clearListeners();
+  clearTimer();
+  if (S._ansUnsub) S._ansUnsub();
+  S.round = 0; S.qIdx = 0; S.pin = null;
+  show('v-landing');
+}
+
+/* ================================================================
+   PLAYER LOGIC
+   ================================================================ */
+function playerStart() {
+  show('v-player-join');
+  const params = new URLSearchParams(location.search);
+  const pin = params.get('pin');
+  if (pin) document.getElementById('p-pin').value = pin;
+}
+
+async function playerJoin() {
+  const pin = document.getElementById('p-pin').value.trim();
+  const name = document.getElementById('p-name').value.trim();
+  const errEl = document.getElementById('p-join-err');
+  errEl.textContent = '';
+
+  if (!pin || pin.length !== 6) { errEl.textContent = 'PIN 6자리를 입력해주세요'; return; }
+  if (!name) { errEl.textContent = '닉네임을 입력해주세요'; return; }
+
+  const roomDoc = await db.collection('rooms').doc(pin).get();
+  if (!roomDoc.exists) { errEl.textContent = '존재하지 않는 게임입니다'; return; }
+  if (roomDoc.data().status !== 'lobby') { errEl.textContent = '이미 시작된 게임입니다'; return; }
+
+  await doAuth();
+  S.role = 'player';
+  S.pin = pin;
+  S.pName = name;
+  S.score = 0;
+  S.lastQKey = '';
+
+  await db.collection('rooms').doc(pin).collection('players').doc(S.uid).set({
+    name: name,
+    score: 0,
+    ts: firebase.firestore.FieldValue.serverTimestamp()
+  });
+
+  show('v-player-wait');
+  document.getElementById('p-wait-name').textContent = `${name} 님, 환영합니다!`;
+
+  /* Listen to room state */
+  const unsub = db.collection('rooms').doc(pin).onSnapshot(doc => {
+    if (!doc.exists) return;
+    const d = doc.data();
+    handlePlayerState(d);
+  });
+  S.listeners.push(unsub);
+}
+
+function handlePlayerState(d) {
+  switch (d.status) {
+    case 'lobby':
+      break;
+
+    case 'round-transition': {
+      const r = ROUNDS[d.round];
+      if (!r) break;
+      show('v-player-round');
+      document.getElementById('p-round-icon').textContent = r.icon;
+      document.getElementById('p-round-name').textContent = `라운드 ${d.round + 1}: ${r.name}`;
+      document.getElementById('p-round-desc').textContent = r.desc;
+      break;
+    }
+
+    case 'question': {
+      const qKey = d.round + '-' + d.qIdx;
+      if (qKey !== S.lastQKey) {
+        S.lastQKey = qKey;
+        S.answered = false;
+        S.round = d.round;
+        S.qIdx = d.qIdx;
+        S.qStartTime = d.qStart;
+        showPlayerAnswerView(d);
+      }
+      break;
+    }
+
+    case 'results':
+      showPlayerResultView();
+      break;
+
+    case 'leaderboard':
+      showPlayerLbView();
+      break;
+
+    case 'finished':
+      showPlayerFinalView();
+      break;
+  }
+}
+
+function showPlayerAnswerView(d) {
+  show('v-player-answer');
+  const r = ROUNDS[d.round];
+  const q = r.questions[d.qIdx];
+
+  document.getElementById('p-q-text').textContent = r.isAudio ? '🎵 프로젝터 화면을 보세요!' : q.q;
+  document.getElementById('p-timer-fill').style.width = '100%';
+
+  for (let i = 0; i < 4; i++) {
+    const btn = document.getElementById('ab' + i);
+    btn.innerHTML = `<span class="shape">${SHAPES[i]}</span>${q.c[i]}`;
+    btn.disabled = false;
+    btn.className = 'ans-btn ' + COLORS[i];
+  }
+
+  /* Player timer */
+  clearTimer();
+  const totalMs = r.time * 1000;
+  S.timer = setInterval(() => {
+    const elapsed = Date.now() - d.qStart;
+    const remain = Math.max(0, totalMs - elapsed);
+    document.getElementById('p-timer-fill').style.width = (remain / totalMs * 100) + '%';
+    if (remain <= 0) {
+      clearTimer();
+      for (let i = 0; i < 4; i++) document.getElementById('ab' + i).disabled = true;
+    }
+  }, 100);
+}
+
+async function playerAnswer(idx) {
+  if (S.answered) return;
+  S.answered = true;
+  clearTimer();
+
+  /* Disable all buttons */
+  for (let i = 0; i < 4; i++) document.getElementById('ab' + i).disabled = true;
+
+  const r = ROUNDS[S.round];
+  const q = r.questions[S.qIdx];
+  const timeMs = Date.now() - S.qStartTime;
+  const correct = idx === q.a;
+  const pts = calcPoints(timeMs, correct, r.time);
+  S.score += pts;
+
+  /* Vibration feedback */
+  if (navigator.vibrate) navigator.vibrate(correct ? [100] : [50, 50, 50]);
+
+  /* Save answer */
+  const docId = `${S.round}_${S.qIdx}_${S.uid}`;
+  await db.collection('rooms').doc(S.pin).collection('answers').doc(docId).set({
+    playerId: S.uid,
+    name: S.pName,
+    round: S.round,
+    qIdx: S.qIdx,
+    answer: idx,
+    time: timeMs,
+    correct: correct,
+    points: pts
+  });
+
+  /* Update score */
+  await db.collection('rooms').doc(S.pin).collection('players').doc(S.uid).update({
+    score: S.score
+  });
+
+  show('v-player-answered');
+}
+
+async function showPlayerResultView() {
+  if (!S.answered) {
+    /* Didn't answer */
+    show('v-player-result');
+    document.getElementById('p-res-icon').textContent = '⏰';
+    document.getElementById('p-res-text').textContent = '시간 초과!';
+    document.getElementById('p-res-pts').textContent = '+0점';
+    document.getElementById('p-res-total').textContent = `총점: ${S.score.toLocaleString()}점`;
+    return;
+  }
+
+  const docId = `${S.round}_${S.qIdx}_${S.uid}`;
+  try {
+    const doc = await db.collection('rooms').doc(S.pin).collection('answers').doc(docId).get();
+    show('v-player-result');
+    if (doc.exists) {
+      const d = doc.data();
+      if (d.correct) {
+        document.getElementById('p-res-icon').textContent = '⭕';
+        document.getElementById('p-res-text').textContent = '정답!';
+        playCorrect();
+      } else {
+        document.getElementById('p-res-icon').textContent = '❌';
+        document.getElementById('p-res-text').textContent = '아쉬워요!';
+        playWrong();
+      }
+      document.getElementById('p-res-pts').textContent = `+${d.points}점`;
+    }
+  } catch(e) {
+    show('v-player-result');
+    document.getElementById('p-res-icon').textContent = '❓';
+    document.getElementById('p-res-text').textContent = '결과 확인 중...';
+    document.getElementById('p-res-pts').textContent = '';
+  }
+  document.getElementById('p-res-total').textContent = `총점: ${S.score.toLocaleString()}점`;
+}
+
+async function showPlayerLbView() {
+  show('v-player-lb');
+  try {
+    const snap = await db.collection('rooms').doc(S.pin).collection('players')
+      .orderBy('score', 'desc').get();
+    const players = [];
+    snap.forEach(d => players.push(d.id));
+    const rank = players.indexOf(S.uid) + 1;
+    document.getElementById('p-lb-rank').textContent = rank <= 3 ? ['🥇','🥈','🥉'][rank - 1] : `${rank}위`;
+    document.getElementById('p-lb-label').textContent = `${players.length}명 중 ${rank}위`;
+    document.getElementById('p-lb-score').textContent = `${S.score.toLocaleString()}점`;
+  } catch(e) {}
+}
+
+async function showPlayerFinalView() {
+  show('v-player-final');
+  spawnConfetti();
+  try {
+    const snap = await db.collection('rooms').doc(S.pin).collection('players')
+      .orderBy('score', 'desc').get();
+    const players = [];
+    snap.forEach(d => players.push(d.id));
+    const rank = players.indexOf(S.uid) + 1;
+    const medals = ['🥇','🥈','🥉'];
+    document.getElementById('p-final-medal').textContent = rank <= 3 ? medals[rank - 1] : '🎉';
+    document.getElementById('p-final-rank').textContent = `${rank}위!`;
+    document.getElementById('p-final-score').textContent = `최종 점수: ${S.score.toLocaleString()}점`;
+  } catch(e) {}
+}
+
+/* ================================================================
+   INIT
+   ================================================================ */
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(location.search);
+  if (params.get('pin')) {
+    playerStart();
+  }
+});
+</script>
+</body>
+</html>
