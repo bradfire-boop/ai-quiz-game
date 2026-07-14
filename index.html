@@ -37,6 +37,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow-x:hidden}
@@ -277,7 +278,7 @@ h3{font-size:1.3rem;margin-bottom:8px;opacity:.85}
     <div class="pin-label">Game PIN</div>
     <div class="pin-number" id="h-pin"></div>
   </div>
-  <div class="qr-box"><img id="h-qr" width="180" height="180" alt="QR"></div>
+  <div class="qr-box" id="h-qr-box"></div>
   <div class="join-url" id="h-url"></div>
   <div class="player-count">참가자: <strong id="h-pcount">0</strong>명</div>
   <div class="player-grid" id="h-players"></div>
@@ -673,41 +674,58 @@ async function doAuth() {
    ================================================================ */
 async function hostStart() {
   show('v-host-lobby');
-  await doAuth();
   S.role = 'host';
   S.pin = genPin();
   S.round = 0;
   S.qIdx = 0;
 
+  /* PIN & QR 즉시 표시 (Firebase 연결 전) */
   document.getElementById('h-pin').textContent = S.pin;
   const pageUrl = location.origin + location.pathname;
   const joinUrl = pageUrl + '?pin=' + S.pin;
   document.getElementById('h-url').textContent = joinUrl;
-  document.getElementById('h-qr').src =
-    'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(joinUrl);
 
-  await db.collection('rooms').doc(S.pin).set({
-    hostId: S.uid,
-    status: 'lobby',
-    round: 0,
-    qIdx: 0,
-    qStart: 0,
-    timeLimit: 20,
-    ts: firebase.firestore.FieldValue.serverTimestamp()
-  });
+  const qrBox = document.getElementById('h-qr-box');
+  qrBox.innerHTML = '';
+  try {
+    new QRCode(qrBox, { text: joinUrl, width: 180, height: 180, colorDark: '#46178f', colorLight: '#ffffff' });
+  } catch(e) {
+    qrBox.innerHTML = '<p style="color:#46178f;padding:20px;font-size:.75rem;word-break:break-all">QR 로딩 실패<br>' + joinUrl + '</p>';
+  }
 
-  /* Listen players */
-  const unsub = db.collection('rooms').doc(S.pin).collection('players')
-    .onSnapshot(snap => {
-      const grid = document.getElementById('h-players');
-      const arr = [];
-      snap.forEach(d => arr.push(d.data().name));
-      S.playerCount = arr.length;
-      grid.innerHTML = arr.map(n => `<div class="player-chip">${n}</div>`).join('');
-      document.getElementById('h-pcount').textContent = arr.length;
-      document.getElementById('h-start-btn').disabled = arr.length < 1;
+  /* Firebase 연결 */
+  try {
+    await doAuth();
+    await db.collection('rooms').doc(S.pin).set({
+      hostId: S.uid,
+      status: 'lobby',
+      round: 0,
+      qIdx: 0,
+      qStart: 0,
+      timeLimit: 20,
+      ts: firebase.firestore.FieldValue.serverTimestamp()
     });
-  S.listeners.push(unsub);
+
+    /* Listen players */
+    const unsub = db.collection('rooms').doc(S.pin).collection('players')
+      .onSnapshot(snap => {
+        const grid = document.getElementById('h-players');
+        const arr = [];
+        snap.forEach(d => arr.push(d.data().name));
+        S.playerCount = arr.length;
+        grid.innerHTML = arr.map(n => `<div class="player-chip">${n}</div>`).join('');
+        document.getElementById('h-pcount').textContent = arr.length;
+        document.getElementById('h-start-btn').disabled = arr.length < 1;
+      });
+    S.listeners.push(unsub);
+  } catch(e) {
+    console.error('Firebase init error:', e);
+    document.getElementById('h-players').innerHTML =
+      '<div style="color:#ff6b6b;padding:16px;font-size:.95rem;line-height:1.6">' +
+      '⚠️ Firebase 연결 실패<br><br><b>' + e.message + '</b><br><br>' +
+      '확인사항:<br>1) Firebase Console → Authentication → Anonymous 활성화<br>' +
+      '2) Firestore Database → Rules 설정</div>';
+  }
 }
 
 async function hostStartGame() {
