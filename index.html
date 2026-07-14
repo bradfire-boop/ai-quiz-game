@@ -813,6 +813,11 @@ async function hostShowQuestion() {
   /* Timer */
   startHostTimer(r.time);
 
+  /* K-Pop 라운드: 문제 시작 시 1초 자동 재생 */
+  if (r.isAudio) {
+    setTimeout(() => playAudio(), 300);
+  }
+
   /* Listen answers */
   if (S._ansUnsub) S._ansUnsub();
   S._ansUnsub = db.collection('rooms').doc(S.pin).collection('answers')
